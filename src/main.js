@@ -12,6 +12,7 @@ import EventDetails from './pages/EventDetails.vue'
 import AddEvent from './pages/AddEvent.vue'
 import EditEvent from './pages/EditEvent.vue'
 import Participants from './pages/Participants.vue'
+import EventQr from './pages/EventQr.vue'
 import AdminAnalytics from './pages/AdminAnalytics.vue'
 import AdminRoles from './pages/AdminRoles.vue'
 import AdminAudit from './pages/AdminAudit.vue'
@@ -29,6 +30,7 @@ const router = createRouter({
     { path: '/events/add', component: AddEvent, meta: { requiresAuth: true, roles: ['Admin', 'Employee'] } },
     { path: '/events/:id/edit', component: EditEvent, meta: { requiresAuth: true, roles: ['Admin', 'Employee'] } },
     { path: '/events/:id/participants', component: Participants, meta: { requiresAuth: true, roles: ['Admin', 'Employee'] } },
+    { path: '/events/:id/qr', component: EventQr, meta: { requiresAuth: true, roles: ['Admin', 'Employee'] } },
     { path: '/admin/analytics', component: AdminAnalytics, meta: { requiresAuth: true, roles: ['Admin', 'Employee'] } },
     { path: '/admin/roles', component: AdminRoles, meta: { requiresAuth: true, roles: ['Admin'] } },
     { path: '/admin/audit', component: AdminAudit, meta: { requiresAuth: true, roles: ['Admin', 'Employee'] } },

@@ -1,16 +1,26 @@
 import { post, get, put, del } from './apiClient.js'
 import { backendFeatures, disableFeature, isMissingEndpointError } from './compat.js'
+import { normalizeLightEvent, parseAddEventId } from '@/lib/eventNormalize.js'
+
+function mapEventsResponse(data) {
+  if (Array.isArray(data)) return data.map(normalizeLightEvent)
+  if (data && Array.isArray(data.items)) {
+    return { ...data, items: data.items.map(normalizeLightEvent) }
+  }
+  return data
+}
 
 export function getEvents(pageNumber = 1, pageSize = 20) {
-  return post('/events/getLightEventsWithPagination', { pageNumber, pageSize })
+  return post('/events/getLightEventsWithPagination', { pageNumber, pageSize }).then(mapEventsResponse)
 }
 
 export function getEventDetails(id) {
-  return get(`/events/get/${id}`)
+  return get(`/events/get/${id}`).then((event) => (event ? normalizeLightEvent(event) : event))
 }
 
-export function addEvent(payload) {
-  return post('/events/add', payload)
+export async function addEvent(payload) {
+  const data = await post('/events/add', payload)
+  return parseAddEventId(data)
 }
 
 export function updateEvent(eventId, payload) {

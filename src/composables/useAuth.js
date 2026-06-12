@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { loginApi, registerApi } from '@/api/auth.js'
+import { clearAttendanceCache } from '@/api/attendance.js'
 import { logger } from '@/utils/logger.js'
 
 function parseJwt(token) {
@@ -26,7 +27,7 @@ function buildUser(token) {
     'Student'
   )
   return {
-    id: claims.sub ?? claims.nameid ?? claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier'],
+    id: claims.sub ?? claims.id ?? claims.nameid ?? claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier'],
     email: claims.email ?? claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'],
     firstName: claims.given_name ?? claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname'] ?? '',
     role: String(role),
@@ -60,6 +61,7 @@ function clearToken() {
   token.value = null
   isAuthenticated.value = false
   user.value = null
+  clearAttendanceCache()
   localStorage.removeItem('token')
   localStorage.removeItem('userProfile')
   logger.info('auth.clearToken', 'Session data removed')

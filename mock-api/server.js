@@ -1,12 +1,31 @@
 import http from 'http'
 import { URL } from 'url'
 
-const PORT = 3001
+const PORT = Number(process.env.PORT) || 3001
 
 const users = [
   { id: '1', email: 'student@example.com', password: '123456', firstName: 'Student', role: 'Student' },
   { id: '2', email: 'admin@example.com', password: 'admin123', firstName: 'Admin', role: 'Admin' },
+  { id: '3', email: 'employee@example.com', password: 'empl123', firstName: 'Employee', role: 'Employee' },
 ]
+
+const qrSessions = new Map()
+
+function eventCoords(event) {
+  return {
+    latitude: event.latitude ?? 55.6558,
+    longitude: event.longitude ?? 37.5175,
+    location: {
+      address: typeof event.location === 'string' ? event.location : event.location?.address ?? '',
+      latitude: event.latitude ?? 55.6558,
+      longitude: event.longitude ?? 37.5175,
+    },
+  }
+}
+
+function makeQrCode(eventId) {
+  return `SE-${eventId}-${Date.now().toString(36).toUpperCase()}`
+}
 
 const events = [
   {
@@ -20,6 +39,8 @@ const events = [
     room: '101',
     creatorId: '1',
     imageUrl: '',
+    latitude: 55.6558,
+    longitude: 37.5175,
   },
   {
     id: '2',
@@ -32,6 +53,8 @@ const events = [
     room: '202',
     creatorId: '2',
     imageUrl: '',
+    latitude: 55.6565,
+    longitude: 37.5182,
   },
 ]
 
@@ -232,6 +255,7 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 200, {
         ...event,
+        ...eventCoords(event),
         registeredCount: [...registrations].filter((k) => k.endsWith(`:${id}`)).length,
       })
     }
@@ -331,6 +355,30 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, registrations.has(`${userId}:${eventId}`))
     }
 
+    if (req.method === 'POST' && pathname === '/attendance') {
+      const body = await readBody(req)
+      if (body?.targetUserId) {
+        if (!isAdminOrEmployee(req)) {
+          return json(res, 403, { message: 'No permissions to attend people' })
+        }
+        const eventId = String(body.eventId ?? '')
+        const targetUserId = String(body.targetUserId ?? '')
+        if (!events.some((e) => e.id === eventId)) {
+          return json(res, 404, { message: 'Event not found' })
+        }
+        const key = `${targetUserId}:${eventId}`
+        if (!registrations.has(key)) {
+          return json(res, 403, { message: 'User is not registered for event' })
+        }
+        if (attendance.has(key)) {
+          return json(res, 400, { message: 'User is already attended for event' })
+        }
+        attendance.add(key)
+        logAudit('attendance.manual', key)
+        return json(res, 200, { id: `${eventId}-${targetUserId}` })
+      }
+    }
+
     if (req.method === 'POST' && pathname.startsWith('/attendance/attendEvent/')) {
       const eventId = pathname.split('/').pop()
       const userId = getUserIdFromAuth(req) ?? '1'
@@ -338,9 +386,52 @@ const server = http.createServer(async (req, res) => {
       if (!registrations.has(key)) {
         return json(res, 400, { message: 'User is not registered for this event' })
       }
+      const body = await readBody(req)
+      const token = String(body.qrCode ?? body.scannedToken ?? body.qrValue ?? '').trim()
+      const session = qrSessions.get(eventId)
+      if (session?.code && token && token !== session.code) {
+        return json(res, 400, { message: 'Invalid or expired QR code' })
+      }
       attendance.add(key)
       logAudit('attendance.confirm', key)
       return json(res, 200, { id: `${eventId}-${userId}` })
+    }
+
+    if (req.method === 'POST' && pathname.startsWith('/eventQr/startSession/')) {
+      if (!isAdminOrEmployee(req)) {
+        return json(res, 403, { message: 'Access denied' })
+      }
+      const eventId = pathname.split('/').pop()
+      const code = makeQrCode(eventId)
+      qrSessions.set(eventId, { code, interval: 30, startedAt: Date.now() })
+      logAudit('eventQr.start', eventId)
+      return json(res, 200, { code, interval: 30 })
+    }
+
+    if (req.method === 'GET' && pathname.startsWith('/eventQr/get/')) {
+      if (!isAdminOrEmployee(req)) {
+        return json(res, 403, { message: 'Access denied' })
+      }
+      const eventId = pathname.split('/').pop()
+      const session = qrSessions.get(eventId)
+      if (!session) {
+        return json(res, 404, { message: 'QR session not active' })
+      }
+      if (Date.now() - session.startedAt > session.interval * 1000) {
+        session.code = makeQrCode(eventId)
+        session.startedAt = Date.now()
+      }
+      return json(res, 200, { code: session.code, interval: session.interval })
+    }
+
+    if (req.method === 'POST' && pathname.startsWith('/eventQr/stopSession/')) {
+      if (!isAdminOrEmployee(req)) {
+        return json(res, 403, { message: 'Access denied' })
+      }
+      const eventId = pathname.split('/').pop()
+      qrSessions.delete(eventId)
+      logAudit('eventQr.stop', eventId)
+      return json(res, 200, true)
     }
 
     if (req.method === 'GET' && pathname.startsWith('/attendance/isAttendanceExist/')) {
@@ -470,8 +561,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       return json(res, 200, {
         address: String(body.address ?? ''),
-        latitude: 55.751244,
-        longitude: 37.618423,
+        latitude: 55.6558,
+        longitude: 37.5175,
       })
     }
 
@@ -482,8 +573,8 @@ const server = http.createServer(async (req, res) => {
       const address = decodeURIComponent(pathname.replace('/location/getEventLocationByAddress/', ''))
       return json(res, 200, {
         address: String(address ?? ''),
-        latitude: 55.751244,
-        longitude: 37.618423,
+        latitude: 55.6558,
+        longitude: 37.5175,
       })
     }
 

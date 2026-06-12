@@ -1,18 +1,28 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import Header from '@/components/Header.vue'
 import Button from '@/components/ui/Button.vue'
 import QrScannerModal from '@/components/QrScannerModal.vue'
+import EventLocationMap from '@/components/EventLocationMap.vue'
 import { getEventDetails, deleteEvent } from '@/api/events.js'
 import { registerForEvent, unregisterFromEvent, checkRegistration } from '@/api/registrations.js'
-import { attendEvent, checkAttendance } from '@/api/attendance.js'
+import { attendEvent, checkAttendance, manualAttendEvent, formatManualAttendanceError } from '@/api/attendance.js'
 import { getEventReviews, addEventReview } from '@/api/reviews.js'
-import { getActiveQr } from '@/api/qr.js'
+import { getActiveQrCode, getQrApiMode } from '@/api/qr.js'
 import { useAuth } from '@/composables/useAuth.js'
 import { backendFeatures } from '@/api/compat.js'
+import {
+  ATTENDANCE_RADIUS_M,
+  calculateDistanceMeters,
+  classifyGeoError,
+  getDevicePosition,
+  isWithinAttendanceRadius,
+  queryGeoPermission,
+} from '@/lib/geolocation.js'
+import { hasNonEmptyId, eventStart } from '@/lib/eventNormalize.js'
 import { logger } from '@/utils/logger.js'
 import { Calendar, Clock, MapPin, DoorOpen, ArrowLeft } from 'lucide-vue-next'
 
@@ -33,14 +43,15 @@ const scannerOpen = ref(false)
 const reviews = ref([])
 const rating = ref(5)
 const comment = ref('')
+const reviewCommentError = ref('')
 const qrLoading = ref(false)
 const activeQrToken = ref('')
-
-function hasNonEmptyId(value) {
-  if (!value) return false
-  if (typeof value !== 'string') return true
-  return value !== '00000000-0000-0000-0000-000000000000'
-}
+const userLocation = ref(null)
+const geoLoading = ref(false)
+const manualUserId = ref('')
+const manualLoading = ref(false)
+const GEO_MAX_AGE_MS = 120000
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function formatDate(dt) {
   if (!dt) return ''
@@ -75,6 +86,7 @@ async function load() {
     notFound.value = true
   } finally {
     loading.value = false
+    await maybeInitGeo()
   }
 }
 
@@ -89,6 +101,7 @@ async function toggleRegistration() {
       await registerForEvent(route.params.id)
       isRegistered.value = true
       toast.success(t('eventDetails.registered'))
+      await maybeInitGeo()
     }
   } catch (e) {
     logger.error('eventDetails.toggleRegistration', e, { eventId: route.params.id })
@@ -98,22 +111,42 @@ async function toggleRegistration() {
   }
 }
 
-async function getCoords() {
-  if (!navigator.geolocation) return { longitude: 0, latitude: 0 }
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        resolve({
-          longitude: pos.coords.longitude,
-          latitude: pos.coords.latitude,
-        })
-      },
-      () => {
-        resolve({ longitude: 0, latitude: 0 })
-      },
-      { enableHighAccuracy: true, timeout: 5000 }
-    )
-  })
+function geoErrorMessage(err) {
+  const kind = classifyGeoError(err)
+  if (kind === 'denied') return t('eventDetails.geoDenied')
+  if (kind === 'timeout') return t('eventDetails.geoTimeout')
+  return t('eventDetails.geoUnavailable')
+}
+
+function formatCoord(value) {
+  return Number(value).toFixed(6)
+}
+
+function isLocationFresh(location) {
+  return location && Date.now() - location.timestamp < GEO_MAX_AGE_MS
+}
+
+async function detectLocation({ silent = false } = {}) {
+  geoLoading.value = true
+  try {
+    const reading = await getDevicePosition({
+      requireGeo: backendFeatures.attendanceRequireGeo,
+    })
+    userLocation.value = reading
+    if (!silent) toast.success(t('eventDetails.geoDetected'))
+    return reading
+  } catch (e) {
+    logger.error('eventDetails.detectLocation', e, { eventId: route.params.id })
+    if (!silent) toast.error(geoErrorMessage(e))
+    throw e
+  } finally {
+    geoLoading.value = false
+  }
+}
+
+async function resolveCoords() {
+  if (isLocationFresh(userLocation.value)) return userLocation.value
+  return detectLocation({ silent: true })
 }
 
 async function attend(code = null) {
@@ -128,14 +161,29 @@ async function attend(code = null) {
   attending.value = true
   try {
     qrCode.value = actualCode
-    const coords = await getCoords()
+    const coords = await resolveCoords()
+    if (backendFeatures.attendanceRequireGeo && mapCoords.value) {
+      const within = isWithinAttendanceRadius(
+        coords.latitude,
+        coords.longitude,
+        mapCoords.value.lat,
+        mapCoords.value.lng
+      )
+      if (!within) {
+        toast.error(t('eventDetails.geoTooFar'))
+        return
+      }
+    }
     await attendEvent(route.params.id, actualCode, coords.longitude, coords.latitude)
     isAttended.value = true
     scannerOpen.value = false
     toast.success(t('eventDetails.attended'))
   } catch (e) {
     logger.error('eventDetails.attend', e, { eventId: route.params.id })
-    toast.error(e.message)
+    let message = e.message
+    if (/so far from event/i.test(message)) message = t('eventDetails.geoTooFar')
+    else if (/location is unavailable/i.test(message)) message = t('eventDetails.geoUnavailable')
+    toast.error(message)
   } finally {
     attending.value = false
   }
@@ -148,14 +196,13 @@ function onDetected(code) {
 async function loadActiveQr() {
   qrLoading.value = true
   try {
-    const data = await getActiveQr(route.params.id)
-    const token = data?.tokenValue ?? data?.scannedToken ?? data?.qrCode ?? ''
-    activeQrToken.value = String(token).trim()
+    const { code } = await getActiveQrCode(route.params.id)
+    activeQrToken.value = code
     if (activeQrToken.value) {
       qrCode.value = activeQrToken.value
-      toast.success('Активный QR загружен')
+      toast.success(t('eventDetails.activeQrLoaded'))
     } else {
-      toast.error('Активный QR не найден')
+      toast.error(t('eventDetails.activeQrNotFound'))
     }
   } catch (e) {
     logger.error('eventDetails.loadActiveQr', e, { eventId: route.params.id })
@@ -181,8 +228,14 @@ async function onDeleteEvent() {
 async function submitReview() {
   if (!backendFeatures.reviews) return
   if (!isAttended.value) return
+  const text = comment.value.trim()
+  if (!text) {
+    reviewCommentError.value = t('validation.reviewCommentRequired')
+    return
+  }
+  reviewCommentError.value = ''
   try {
-    await addEventReview(route.params.id, rating.value, comment.value.trim())
+    await addEventReview(route.params.id, rating.value, text)
     comment.value = ''
     reviews.value = await getEventReviews(route.params.id)
     toast.success(t('eventDetails.reviewSaved'))
@@ -199,7 +252,69 @@ const canEditEvent = () => canManage() && backendFeatures.eventUpdate
 const canDeleteEvent = () => canManage() && backendFeatures.eventDelete
 const canUseReviews = () => backendFeatures.reviews
 const getEventAddress = () => event.value?.location?.address ?? event.value?.address ?? event.value?.location ?? ''
-const getEventStart = () => event.value?.startTime ?? event.value?.startDate ?? null
+const getEventStart = () => eventStart(event.value)
+
+const mapCoords = computed(() => {
+  const e = event.value
+  if (!e) return null
+  const lat = Number(e.latitude ?? e.location?.latitude)
+  const lng = Number(e.longitude ?? e.location?.longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return { lat, lng }
+})
+
+const distanceToEvent = computed(() => {
+  if (!userLocation.value || !mapCoords.value) return null
+  return Math.round(
+    calculateDistanceMeters(
+      mapCoords.value.lat,
+      mapCoords.value.lng,
+      userLocation.value.latitude,
+      userLocation.value.longitude
+    )
+  )
+})
+
+const withinAttendanceRadius = computed(() => {
+  if (distanceToEvent.value == null) return null
+  return distanceToEvent.value <= ATTENDANCE_RADIUS_M
+})
+
+async function maybeInitGeo() {
+  if (!backendFeatures.attendanceRequireGeo || !isRegistered.value || isAttended.value) return
+  const permission = await queryGeoPermission()
+  if (permission === 'granted') {
+    detectLocation({ silent: true }).catch(() => {})
+  }
+}
+
+const canQrSession = () => {
+  if (!canManage()) return false
+  return getQrApiMode() === 'active'
+    ? backendFeatures.activeQrCheckIn
+    : backendFeatures.eventQrSession
+}
+
+const canManualAttend = () => canManage() && backendFeatures.manualAttendance
+
+async function onManualAttend() {
+  const target = manualUserId.value.trim()
+  if (!GUID_RE.test(target)) {
+    toast.error(t('eventDetails.manualInvalidUserId'))
+    return
+  }
+  manualLoading.value = true
+  try {
+    await manualAttendEvent(route.params.id, target)
+    manualUserId.value = ''
+    toast.success(t('eventDetails.manualAttendSuccess'))
+  } catch (e) {
+    logger.error('eventDetails.manualAttend', e, { eventId: route.params.id, targetUserId: target })
+    toast.error(formatManualAttendanceError(e.message, t))
+  } finally {
+    manualLoading.value = false
+  }
+}
 
 onMounted(load)
 </script>
@@ -261,12 +376,25 @@ onMounted(load)
             <p v-if="event.description" class="mb-6 text-sm leading-relaxed text-muted-foreground">
               {{ event.description }}
             </p>
+
+            <div v-if="mapCoords" class="mb-6">
+              <p class="mb-2 text-sm font-medium text-foreground">{{ t('eventDetails.mapTitle') }}</p>
+              <p class="mb-2 text-xs text-muted-foreground">{{ t('eventDetails.mapLegend') }}</p>
+              <EventLocationMap
+                :latitude="mapCoords.lat"
+                :longitude="mapCoords.lng"
+                :user-latitude="userLocation?.latitude ?? null"
+                :user-longitude="userLocation?.longitude ?? null"
+                :title="event.name"
+                :address="getEventAddress()"
+              />
+            </div>
             <p class="mb-4 text-sm text-muted-foreground">
               {{ t('eventDetails.capacity') }}: {{ event.registeredCount ?? 0 }}/{{ event.capacity ?? '—' }}
             </p>
 
             <Button
-              v-if="isAuthenticated && !isCreator()"
+              v-if="isAuthenticated && !isCreator() && (!isRegistered || backendFeatures.registrationCancel)"
               :disabled="registering"
               :variant="isRegistered ? 'outline' : 'default'"
               class="w-full sm:w-auto"
@@ -274,15 +402,68 @@ onMounted(load)
             >
               {{ isRegistered ? t('eventDetails.unregister') : t('eventDetails.register') }}
             </Button>
+            <p
+              v-else-if="isAuthenticated && !isCreator() && isRegistered"
+              class="text-sm font-medium text-emerald-600"
+            >
+              {{ t('eventDetails.registered') }}
+            </p>
 
+            <div
+              v-if="isAuthenticated && isRegistered && !isAttended && backendFeatures.attendanceRequireGeo"
+              class="mt-3 space-y-2 rounded-md border border-border bg-muted/30 p-3"
+            >
+              <p class="text-xs text-muted-foreground">{{ t('eventDetails.geoRequiredHint') }}</p>
+              <p class="text-xs text-muted-foreground">{{ t('eventDetails.geoLaptopHint') }}</p>
+              <Button variant="outline" size="sm" :disabled="geoLoading" @click="detectLocation()">
+                {{ geoLoading ? '...' : t('eventDetails.detectLocation') }}
+              </Button>
+              <div v-if="userLocation" class="space-y-1 text-xs">
+                <p>
+                  {{ t('eventDetails.geoCoords', {
+                    lat: formatCoord(userLocation.latitude),
+                    lng: formatCoord(userLocation.longitude),
+                  }) }}
+                </p>
+                <p v-if="userLocation.accuracy != null">
+                  {{ t('eventDetails.geoAccuracy', { m: Math.round(userLocation.accuracy) }) }}
+                </p>
+                <p v-if="distanceToEvent != null">
+                  {{ t('eventDetails.geoDistance', { m: distanceToEvent }) }}
+                </p>
+                <p
+                  v-if="withinAttendanceRadius === true"
+                  class="font-medium text-emerald-600"
+                >
+                  {{ t('eventDetails.geoWithinRange') }}
+                </p>
+                <p
+                  v-else-if="withinAttendanceRadius === false"
+                  class="font-medium text-destructive"
+                >
+                  {{ t('eventDetails.geoTooFar') }}
+                </p>
+                <p
+                  v-if="userLocation.accuracy != null && userLocation.accuracy > ATTENDANCE_RADIUS_M"
+                  class="text-muted-foreground"
+                >
+                  {{ t('eventDetails.geoLowAccuracy') }}
+                </p>
+              </div>
+            </div>
             <div v-if="isAuthenticated && isRegistered && !isAttended" class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
               <input
                 v-model="qrCode"
                 :placeholder="t('eventDetails.qrPlaceholder')"
                 class="h-10 rounded-md border border-input bg-background px-3 text-sm"
               />
-              <Button variant="outline" :disabled="qrLoading" @click="loadActiveQr">
-                {{ qrLoading ? '...' : 'Получить активный QR' }}
+              <Button
+                v-if="backendFeatures.studentFetchActiveQr"
+                variant="outline"
+                :disabled="qrLoading"
+                @click="loadActiveQr"
+              >
+                {{ qrLoading ? '...' : t('eventDetails.fetchActiveQr') }}
               </Button>
               <Button variant="outline" :disabled="attending" @click="scannerOpen = true">
                 {{ t('eventDetails.scanQr') }}
@@ -303,9 +484,15 @@ onMounted(load)
                   <option :value="2">2</option>
                   <option :value="1">1</option>
                 </select>
-                <input v-model="comment" :placeholder="t('eventDetails.reviewPlaceholder')" class="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" />
+                <input
+                  v-model="comment"
+                  :placeholder="t('eventDetails.reviewPlaceholder')"
+                  class="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                  @input="reviewCommentError = ''"
+                />
                 <Button @click="submitReview">{{ t('eventDetails.sendReview') }}</Button>
               </div>
+              <p v-if="reviewCommentError" class="text-sm text-destructive">{{ reviewCommentError }}</p>
             </div>
             <div v-if="canUseReviews() && reviews.length" class="mt-4 space-y-2">
               <p class="text-sm font-medium">{{ t('eventDetails.reviews') }}</p>
@@ -315,10 +502,13 @@ onMounted(load)
               </div>
             </div>
 
-            <div v-if="isAuthenticated && canManage()" class="mt-4">
+            <div v-if="isAuthenticated && canManage()" class="mt-4 space-y-4">
               <div class="flex flex-wrap gap-2">
                 <RouterLink v-if="canManageParticipants()" :to="`/events/${route.params.id}/participants`">
                   <Button variant="outline">{{ t('eventDetails.participants') }}</Button>
+                </RouterLink>
+                <RouterLink v-if="canQrSession()" :to="`/events/${route.params.id}/qr`">
+                  <Button variant="outline">{{ t('eventDetails.qrCheckIn') }}</Button>
                 </RouterLink>
                 <RouterLink v-if="canEditEvent()" :to="`/events/${route.params.id}/edit`">
                   <Button variant="outline">{{ t('eventDetails.editEvent') }}</Button>
@@ -326,6 +516,23 @@ onMounted(load)
                 <Button v-if="canDeleteEvent()" variant="destructive" @click="onDeleteEvent">
                   {{ t('eventDetails.deleteEvent') }}
                 </Button>
+              </div>
+              <div
+                v-if="canManualAttend()"
+                class="rounded-lg border border-border bg-muted/30 p-4"
+              >
+                <p class="text-sm font-medium text-foreground">{{ t('eventDetails.manualAttendTitle') }}</p>
+                <p class="mt-1 text-sm text-muted-foreground">{{ t('eventDetails.manualAttendHint') }}</p>
+                <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    v-model="manualUserId"
+                    :placeholder="t('eventDetails.manualUserIdPlaceholder')"
+                    class="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm font-mono"
+                  />
+                  <Button :disabled="manualLoading" @click="onManualAttend">
+                    {{ manualLoading ? '...' : t('eventDetails.manualAttendSubmit') }}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

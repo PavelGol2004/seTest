@@ -4,8 +4,8 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useForm, Field } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
-import { z } from 'zod'
 import { toast } from 'vue-sonner'
+import { buildEventFormSchema } from '@/lib/eventFormSchema.js'
 import Header from '@/components/Header.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
@@ -25,20 +25,7 @@ const { user } = useAuth()
 const submitting = ref(false)
 const checkingLocation = ref(false)
 
-const schema = toTypedSchema(
-  z.object({
-    name: z.string().trim().min(3).max(120),
-    description: z.string().trim().min(10).max(3000),
-    date: z.string().min(1),
-    time: z.string().min(1),
-    address: z.string().trim().min(3).max(255),
-    room: z.string().trim().max(40).optional().or(z.literal('')),
-    imageUrl: z.string().trim().url().optional().or(z.literal('')),
-    qrCodeExpirationTime: z.coerce.number().int().min(1).max(120),
-    capacity: z.coerce.number().int().min(1).max(10000),
-    status: z.enum(['draft', 'published', 'cancelled', 'archived']),
-  })
-)
+const schema = toTypedSchema(buildEventFormSchema(t, { locationKey: 'address', includeQr: true }))
 
 const { handleSubmit, errors, setFieldValue } = useForm({
   validationSchema: schema,

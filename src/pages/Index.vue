@@ -8,6 +8,7 @@ import Button from '@/components/ui/Button.vue'
 import { Calendar, Clock, ArrowRight, Sparkles } from 'lucide-vue-next'
 import { getEvents } from '@/api/events.js'
 import { useAuth } from '@/composables/useAuth.js'
+import { eventStart } from '@/lib/eventNormalize.js'
 
 const { t } = useI18n()
 const { isAuthenticated } = useAuth()
@@ -28,10 +29,6 @@ function formatDate(dt) {
 function formatTime(dt) {
   if (!dt) return ''
   return new Date(dt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
-
-function eventStart(event) {
-  return event?.startTime ?? event?.startDate ?? null
 }
 
 async function load() {

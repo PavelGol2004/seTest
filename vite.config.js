@@ -12,6 +12,7 @@ const API_PATH_PREFIXES = [
   'participants',
   'location',
   'qr',
+  'eventQr',
   'admin',
 ]
 
@@ -31,10 +32,14 @@ export default defineConfig(({ mode }) => {
   // Прокси только если запросы идут на тот же origin (VITE_API_URL пустой).
   // Тогда браузер не делает cross-origin запросов и CORS на бэкенде не нужен.
   if (!apiBase && proxyTarget) {
+    /** Не проксировать HTML-навигацию (например /events/:id — страница Vue, не API). */
+    const spaBypass = (req) => {
+      if (req.headers.accept?.includes('text/html')) return '/index.html'
+    }
     server.proxy = Object.fromEntries(
       API_PATH_PREFIXES.map((prefix) => [
         `/${prefix}`,
-        { target: proxyTarget, changeOrigin: true },
+        { target: proxyTarget, changeOrigin: true, bypass: spaBypass },
       ]),
     )
   }

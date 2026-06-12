@@ -4,8 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useForm, Field } from 'vee-validate'
 import { toTypedSchema } from '@vee-validate/zod'
-import { z } from 'zod'
 import { toast } from 'vue-sonner'
+import { buildEventFormSchema } from '@/lib/eventFormSchema.js'
 import Header from '@/components/Header.vue'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
@@ -26,19 +26,7 @@ const { user } = useAuth()
 const loading = ref(true)
 const submitting = ref(false)
 
-const schema = toTypedSchema(
-  z.object({
-    name: z.string().trim().min(3).max(120),
-    description: z.string().trim().min(10).max(3000),
-    date: z.string().min(1),
-    time: z.string().min(1),
-    location: z.string().trim().min(3).max(255),
-    room: z.string().trim().max(40).optional().or(z.literal('')),
-    imageUrl: z.string().trim().url().optional().or(z.literal('')),
-    capacity: z.coerce.number().int().min(1).max(10000),
-    status: z.enum(['draft', 'published', 'cancelled', 'archived']),
-  })
-)
+const schema = toTypedSchema(buildEventFormSchema(t, { locationKey: 'location' }))
 
 const { handleSubmit, errors, setValues } = useForm({
   validationSchema: schema,
@@ -149,15 +137,18 @@ onMounted(load)
               <div class="space-y-1">
                 <Label>{{ t('addEvent.date') }}</Label>
                 <Field name="date" v-slot="{ field }"><Input v-bind="field" type="date" /></Field>
+                <p v-if="errors.date" class="text-sm text-destructive">{{ errors.date }}</p>
               </div>
               <div class="space-y-1">
                 <Label>{{ t('addEvent.time') }}</Label>
                 <Field name="time" v-slot="{ field }"><Input v-bind="field" type="time" /></Field>
+                <p v-if="errors.time" class="text-sm text-destructive">{{ errors.time }}</p>
               </div>
             </div>
             <div class="space-y-1">
               <Label>{{ t('eventDetails.location') }}</Label>
               <Field name="location" v-slot="{ field }"><Input v-bind="field" /></Field>
+              <p v-if="errors.location" class="text-sm text-destructive">{{ errors.location }}</p>
             </div>
             <div class="space-y-1">
               <Label>{{ t('addEvent.room') }}</Label>
@@ -172,6 +163,7 @@ onMounted(load)
               <div class="space-y-1">
                 <Label>{{ t('addEvent.capacity') }}</Label>
                 <Field name="capacity" v-slot="{ field }"><Input v-bind="field" type="number" min="1" /></Field>
+                <p v-if="errors.capacity" class="text-sm text-destructive">{{ errors.capacity }}</p>
               </div>
               <div class="space-y-1">
                 <Label>{{ t('addEvent.status') }}</Label>

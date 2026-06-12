@@ -3,8 +3,8 @@ import { logger } from '@/utils/logger.js'
 
 const STORAGE_KEY = 'backendFeatureFlags'
 
-const DEFAULT_FEATURES = {
-  // Start from enabled to preserve previous UX, then downgrade on missing endpoint responses.
+/** Mock API (:3001) — полный набор фич для демо/тестов. */
+const MOCK_API_FEATURES = {
   eventUpdate: true,
   eventDelete: true,
   eventAnnouncements: true,
@@ -14,7 +14,41 @@ const DEFAULT_FEATURES = {
   adminRoles: true,
   adminAudit: true,
   attendanceCheck: true,
+  eventQrSession: true,
+  activeQrCheckIn: true,
+  /** Студент: кнопка «Получить активный QR» (getActiveQr); на real backend — сканер/ввод. */
+  studentFetchActiveQr: true,
+  attendanceRequireGeo: false,
+  registrationCancel: true,
+  manualAttendance: true,
 }
+
+/**
+ * Реальный SmartEvent.Backend (:5187) — только поддерживаемые эндпоинты.
+ * Остальные фичи отключены статически (не через runtime-degrade).
+ */
+const REAL_BACKEND_FEATURES = {
+  eventUpdate: false,
+  eventDelete: false,
+  eventAnnouncements: false,
+  participants: false,
+  reviews: false,
+  adminAnalytics: false,
+  adminRoles: false,
+  adminAudit: false,
+  attendanceCheck: true,
+  eventQrSession: false,
+  activeQrCheckIn: true,
+  studentFetchActiveQr: false,
+  attendanceRequireGeo: true,
+  registrationCancel: false,
+  manualAttendance: true,
+}
+
+export const isMockApi = String(import.meta.env.VITE_API_URL ?? '').includes('3001')
+export const isRealBackend = !isMockApi
+
+const PROFILE_FEATURES = isMockApi ? MOCK_API_FEATURES : REAL_BACKEND_FEATURES
 
 function loadStoredFlags() {
   try {
@@ -35,13 +69,16 @@ function persistFlags() {
 }
 
 export const backendFeatures = reactive({
-  ...DEFAULT_FEATURES,
+  ...PROFILE_FEATURES,
   ...loadStoredFlags(),
 })
 
+// Профиль окружения всегда перекрывает localStorage.
+Object.assign(backendFeatures, PROFILE_FEATURES)
+
 export function isMissingEndpointError(error) {
   const status = Number(error?.status ?? 0)
-  return status === 404 || status === 405 || status === 501
+  return status === 404 || status === 405 || status === 500 || status === 501
 }
 
 export function disableFeature(featureKey, reason = null) {
@@ -52,7 +89,7 @@ export function disableFeature(featureKey, reason = null) {
 }
 
 export function enableAllFeaturesForDebug() {
-  Object.keys(DEFAULT_FEATURES).forEach((key) => {
+  Object.keys(MOCK_API_FEATURES).forEach((key) => {
     backendFeatures[key] = true
   })
   persistFlags()

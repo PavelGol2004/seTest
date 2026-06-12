@@ -22,7 +22,7 @@ async function handleResponse(res) {
     if (res.status === 403) message = 'Access denied'
     try {
       const data = await res.json()
-      message = data?.title ?? data?.message ?? message
+      message = data?.detail ?? data?.title ?? data?.message ?? message
     } catch {}
     const error = new Error(message)
     error.status = res.status

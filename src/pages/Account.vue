@@ -11,6 +11,7 @@ import { useAuth } from '@/composables/useAuth.js'
 import { LogOut, User } from 'lucide-vue-next'
 import { getEvents } from '@/api/events.js'
 import { checkRegistration } from '@/api/registrations.js'
+import { eventStart, hasNonEmptyId } from '@/lib/eventNormalize.js'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -21,19 +22,9 @@ const loading = ref(false)
 const registeredEvents = ref([])
 const attendedEvents = ref([])
 
-function hasNonEmptyId(value) {
-  if (!value) return false
-  if (typeof value !== 'string') return true
-  return value !== '00000000-0000-0000-0000-000000000000'
-}
-
 function formatDate(dt) {
   if (!dt) return ''
   return new Date(dt).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' })
-}
-
-function eventStart(event) {
-  return event?.startTime ?? event?.startDate ?? null
 }
 
 async function loadEvents() {
@@ -57,8 +48,14 @@ async function loadEvents() {
     const registered = checks
       .filter((x) => x.exists)
       .map((x) => x.event)
-    registeredEvents.value = registered.filter((event) => new Date(eventStart(event)).getTime() >= now)
-    attendedEvents.value = registered.filter((event) => new Date(eventStart(event)).getTime() < now)
+    registeredEvents.value = registered.filter((event) => {
+      const start = eventStart(event)
+      return !start || new Date(start).getTime() >= now
+    })
+    attendedEvents.value = registered.filter((event) => {
+      const start = eventStart(event)
+      return Boolean(start) && new Date(start).getTime() < now
+    })
   } catch (e) {
     toast.error(e.message)
   } finally {

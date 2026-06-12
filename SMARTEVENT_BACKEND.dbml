@@ -1,0 +1,99 @@
+// SmartEvent.Backend — физическая модель БД (полная схема)
+// https://github.com/mirage-only/SmartEvent.Backend/tree/develop
+// Миграция: 20260320070402_Initial · SQL Server · EF Core 10
+//
+// dbdiagram.io → Import this file → Export PNG/PDF
+
+Project SmartEvent {
+  database_type: 'SQL Server'
+  Note: '''
+    UserRole: 0 Student, 1 Employee, 2 Admin, 3 Guest
+    AttendanceMethod: 0 Qr, 1 TeacherMarked
+    QrCodes.Status: 0 Active, 1 Expired
+  '''
+}
+
+Table Users {
+  Id uuid [pk, not null]
+  Email varchar(256) [not null, unique]
+  FirstName varchar(50) [not null]
+  LastName varchar(50) [not null]
+  Patronymic varchar(50) [not null]
+  PasswordHash text [not null]
+  UserRole int [not null]
+  CreatedAt datetime [not null]
+  UpdatedAt datetime [not null]
+  IsActive boolean [not null]
+  IsDeleted boolean [not null]
+  DeletedAt datetime [null]
+}
+
+Table Events {
+  Id uuid [pk, not null]
+  Name varchar(200) [not null]
+  Description varchar(2000) [not null]
+  ImageUrl text [not null]
+  StartTime datetime [not null]
+  Longitude double [not null]
+  Latitude double [not null]
+  Address text [not null]
+  Room text [not null]
+  CreatorId uuid [not null]
+  CreatedAt datetime [not null]
+  UpdatedAt datetime [not null]
+  IsQrVerificationActive boolean [not null]
+  QrCodeExpirationTime bigint [not null]
+}
+
+Table EventOrganizers {
+  UserId uuid [pk, not null]
+  EventId uuid [pk, not null]
+  AssignedAt datetime [not null]
+}
+
+Table Registrations {
+  Id uuid [pk, not null]
+  UserId uuid [not null]
+  EventId uuid [not null]
+  RegisteredAt datetime [not null]
+}
+
+Table QrCodes {
+  Id uuid [pk, not null]
+  TokenValue varchar(450) [not null, unique]
+  Status int [not null]
+  CreatedAt datetime [not null]
+  ExpiresAt datetime [not null]
+  EventId uuid [not null]
+}
+
+Table Attendances {
+  Id uuid [pk, not null]
+  UserId uuid [not null]
+  EventId uuid [not null]
+  ConfirmedAt datetime [not null]
+  Method int [not null]
+  ConfirmedByOrganizerId uuid [null]
+  QrCodeId uuid [null]
+  Longitude double [null]
+  Latitude double [null]
+
+  Note: 'EventId→Events — логическая FK. В миграции EF опечатка: UserId→Events.'
+}
+
+// --- Связи ---
+
+Ref: Events.CreatorId > Users.Id [delete: cascade]
+
+Ref: EventOrganizers.UserId > Users.Id [delete: no action]
+Ref: EventOrganizers.EventId > Events.Id [delete: no action]
+
+Ref: Registrations.UserId > Users.Id [delete: no action]
+Ref: Registrations.EventId > Events.Id [delete: cascade]
+
+Ref: QrCodes.EventId > Events.Id [delete: cascade]
+
+Ref: Attendances.UserId > Users.Id [delete: no action]
+Ref: Attendances.EventId > Events.Id [delete: no action]
+Ref: Attendances.QrCodeId > QrCodes.Id
+Ref: Attendances.ConfirmedByOrganizerId > Users.Id

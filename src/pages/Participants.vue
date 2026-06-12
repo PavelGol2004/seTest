@@ -9,6 +9,7 @@ import Card from '@/components/ui/Card.vue'
 import CardContent from '@/components/ui/CardContent.vue'
 import { getParticipants, removeParticipant } from '@/api/participants.js'
 import { announceEvent } from '@/api/events.js'
+import { manualAttendEvent, formatManualAttendanceError } from '@/api/attendance.js'
 import { backendFeatures } from '@/api/compat.js'
 
 const route = useRoute()
@@ -19,6 +20,7 @@ const current = ref('registered')
 const registered = ref([])
 const visited = ref([])
 const removingId = ref(null)
+const markingId = ref(null)
 const message = ref('')
 
 async function load() {
@@ -42,6 +44,20 @@ async function load() {
 }
 
 onMounted(load)
+
+async function onManualAttend(userId) {
+  if (!backendFeatures.manualAttendance) return
+  markingId.value = userId
+  try {
+    await manualAttendEvent(route.params.id, userId)
+    toast.success(t('participants.markedAttended'))
+    await load()
+  } catch (e) {
+    toast.error(formatManualAttendanceError(e.message, t))
+  } finally {
+    markingId.value = null
+  }
+}
 
 async function onRemove(userId) {
   if (!window.confirm(t('participants.removeConfirm'))) return
@@ -124,15 +140,25 @@ async function sendAnnouncement() {
                 <p class="font-medium">{{ p.firstName || p.name || p.email || '—' }}</p>
                 <p class="text-sm text-muted-foreground">{{ p.email || '—' }}</p>
               </div>
-              <Button
-                v-if="current === 'registered'"
-                size="sm"
-                variant="destructive"
-                :disabled="removingId === p.id"
-                @click="onRemove(p.id)"
-              >
-                {{ removingId === p.id ? '...' : t('participants.remove') }}
-              </Button>
+              <div v-if="current === 'registered'" class="flex shrink-0 flex-col gap-2 sm:flex-row">
+                <Button
+                  v-if="backendFeatures.manualAttendance"
+                  size="sm"
+                  variant="outline"
+                  :disabled="markingId === p.id"
+                  @click="onManualAttend(p.id)"
+                >
+                  {{ markingId === p.id ? '...' : t('participants.markAttended') }}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  :disabled="removingId === p.id"
+                  @click="onRemove(p.id)"
+                >
+                  {{ removingId === p.id ? '...' : t('participants.remove') }}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

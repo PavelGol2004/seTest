@@ -1,0 +1,32 @@
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+bun.lockb
+.claude
+.github/
+RELEASE_CHECKLIST_RU.md
+
+# Выгрузки и черновики диплома / отчётов (только локально)
+tmp_docx_extract/
+*_extracted*.txt
+practice_report_extracted_utf8.txt
+diploma_requirements_2016_extracted.txt
+
+ДЕМО_ВИДЕО_СЦЕНАРИЙ_SMARTEVENT_RU.md
+ДИАГРАММА_ПРЕЦЕДЕНТОВ_SMARTEVENT_РИСУНКИ_MERMAID.md
+ДИПЛОМНАЯ_РАБОТА_SMARTEVENT_WORD_READY.txt
+ДИПЛОМНАЯ_РАБОТА_SMARTEVENT_WORD_STYLES_HINTS.txt
+ДИПЛОМНАЯ_РАБОТА_SMARTEVENT_ЧЕРНОВИК_RU.md
+ДОКУМЕНТАЦИЯ_ПРИЛОЖЕНИЯ_RU.md
+ДОКУМЕНТАЦИЯ_ФАЙЛОВ_ПРОЕКТА_RU.md
+ПРЕЗЕНТАЦИЯ_ЗАЩИТА_SMARTEVENT_RU.md
+ФИНАЛЬНАЯ_ПРИЕМКА_И_ПРОГОН_RU.md
+
+test-results/
+
+# Логи и служебные файлы ОС
+*.log
+.DS_Store
+Thumbs.db

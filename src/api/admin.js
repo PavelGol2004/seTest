@@ -1,5 +1,31 @@
-import { get, put } from './apiClient.js'
+import { get, post, put } from './apiClient.js'
 import { backendFeatures, disableFeature, isMissingEndpointError } from './compat.js'
+
+const ROLE_BY_INT = {
+  0: 'Student',
+  1: 'Employee',
+  2: 'Admin',
+  3: 'Guest',
+}
+
+function mapBackendUser(user) {
+  const roleRaw = user?.userRole ?? user?.UserRole ?? user?.role
+  const role =
+    typeof roleRaw === 'number'
+      ? ROLE_BY_INT[roleRaw] ?? 'Student'
+      : String(roleRaw ?? 'Student')
+  return {
+    id: String(user?.id ?? user?.Id ?? ''),
+    firstName: user?.firstName ?? user?.FirstName ?? '',
+    email: user?.email ?? user?.Email ?? '',
+    role,
+  }
+}
+
+function mapUsersList(data) {
+  const list = Array.isArray(data) ? data : data?.items ?? data?.users ?? []
+  return list.map(mapBackendUser).filter((u) => u.id)
+}
 
 export function getAnalytics() {
   if (!backendFeatures.adminAnalytics) {
@@ -28,13 +54,15 @@ export function getAnalytics() {
 
 export function getUsersWithRoles() {
   if (!backendFeatures.adminRoles) return Promise.resolve([])
-  return get('/admin/roles').catch((error) => {
-    if (isMissingEndpointError(error)) {
-      disableFeature('adminRoles', '/admin/roles endpoint is missing')
-      return []
-    }
-    throw error
-  })
+  return post('/users/getAllUsersByAdmin', { pageNumber: 1, pageSize: 200 })
+    .then(mapUsersList)
+    .catch((error) => {
+      if (isMissingEndpointError(error)) {
+        disableFeature('adminRoles', '/users/getAllUsersByAdmin endpoint unavailable')
+        return []
+      }
+      throw error
+    })
 }
 
 export function updateUserRole(userId, role) {

@@ -11,6 +11,11 @@ const loading = ref(true)
 
 async function load() {
   loading.value = true
+  if (!backendFeatures.adminAudit) {
+    items.value = []
+    loading.value = false
+    return
+  }
   try {
     items.value = await getAuditLog()
   } catch {

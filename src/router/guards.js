@@ -10,11 +10,11 @@ export function getRoleFromToken(token) {
         .join('')
     )
     const claims = JSON.parse(json)
-    return (
+    const role =
       claims.role ??
       claims['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ??
       null
-    )
+    return role ? String(role) : null
   } catch {
     return null
   }

@@ -76,6 +76,17 @@ DEV_API_PROXY_TARGET=http://localhost:5187
 
 В proxy-режиме браузер обращается к `localhost:8080`, а Vite пересылает запросы на backend.
 
+### Профиль API (реальный backend)
+
+Фронт согласован с `SmartEvent.Backend` через `src/api/compat.js`:
+
+| Работает на `:5187` | Только mock (`:3001`) |
+|---------------------|------------------------|
+| auth, каталог, детали, создание события, QR, запись, посещение + гео | reviews, participants |
+| | admin analytics/audit/roles, edit/delete события, eventQr session |
+
+Проверка контракта: `npm run probe:backend-api`
+
 ## Автотесты
 
 ```sh

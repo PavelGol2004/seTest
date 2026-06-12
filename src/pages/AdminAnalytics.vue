@@ -63,6 +63,11 @@ const donutStrokeDashoffset = computed(() => {
 async function load() {
   loading.value = true
   errorMessage.value = ''
+  if (!backendFeatures.adminAnalytics) {
+    stats.value = normalizeStats({ unavailable: true })
+    loading.value = false
+    return
+  }
   try {
     stats.value = normalizeStats(await getAnalytics())
   } catch (e) {
